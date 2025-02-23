@@ -1,9 +1,9 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 import openai
 import google.generativeai as genai
 from skyfield.api import load
-from models.database import SessionLocal
-from models.models import Consulta, CacheConsulta
+#from models.database import SessionLocal
+#from models.models import Consulta, CacheConsulta
 from config import Config
 from log_config import logger
 
@@ -75,21 +75,36 @@ def chat():
 
     datos = request.json
     mensaje_usuario = datos.get("mensaje", "")
-    usuario = datos.get("usuario", "Anónimo")
+    token = request.headers.get("Authorization")
+
+    if not token:
+        return jsonify({"error": "No autenticado"}), 401
+    
+    # Obtener Firestore y Auth desde `current_app`
+    db = current_app.config["db"]
+    auth = current_app.config["auth"]
+
+     # Verificar y extraer el UID del usuario autenticado
+    try:
+        decoded_token = auth.verify_id_token(token.replace("Bearer ", ""))
+        usuario = decoded_token["uid"]  # 🔥 Ahora `usuario` tiene el UID del usuario autenticado
+        logger.info(f"Usuario autenticado: {usuario}")
+    except Exception as e:
+        logger.error(f"Error al verificar token: {e}")
+        return jsonify({"error": "Token inválido"}), 401
+
 
     if not mensaje_usuario:
         logger.warning("Solicitud sin mensaje recibido")
         return jsonify({"error": "Mensaje vacío"}), 400
 
-    db = SessionLocal()
+    # Verificar si la consulta ya existe en Firestore (caché)
+    consulta_cache = db.collection("cache_consulta").where("pregunta", "==", mensaje_usuario).limit(1).stream()
+    cache_existente = next(consulta_cache, None)
 
-    # Verificar si la consulta ya existe en caché
-    consulta_cache = db.query(CacheConsulta).filter(CacheConsulta.pregunta == mensaje_usuario).first()
-    if consulta_cache:
-        logger.info("Respuesta obtenida desde caché")
-        respuesta_texto = consulta_cache.respuesta
-        db.close()
-        return jsonify({"respuesta": respuesta_texto})
+    if cache_existente:
+        logger.info("Respuesta obtenida desde caché del usuario en Firestore")
+        return jsonify({"respuesta": cache_existente.to_dict()["respuesta"]})
 
     # Determinar cuántos tokens necesita la respuesta
     def calcular_max_tokens(mensaje):
@@ -140,14 +155,19 @@ def chat():
         logger.error(f"Error en la consulta a OpenAI: {e}")
         respuesta_texto = "Hubo un error al procesar tu consulta."
 
-    nueva_cache = CacheConsulta(pregunta=mensaje_usuario, respuesta=respuesta_texto)
-    db.add(nueva_cache)
-
-    nueva_consulta = Consulta(usuario=usuario, mensaje=mensaje_usuario, respuesta=respuesta_texto)
-    db.add(nueva_consulta)
-
-    db.commit()
-    db.close()
+     # Guardar la consulta en Firestore con el UID del usuario autenticado
+    consulta_data = {
+        "mensaje": mensaje_usuario,
+        "respuesta": respuesta_texto,
+    }
+    db.collection("usuarios").document(usuario).collection("consultas").add(consulta_data)
+     
+     # Guardar la consulta en caché del usuario
+    cache_data = {
+        "pregunta": mensaje_usuario,
+        "respuesta": respuesta_texto
+    }
+    db.collection("usuarios").document(usuario).collection("cache_consulta").add(cache_data)
     
     logger.info(f"Respuesta enviada al usuario: {usuario}")
 

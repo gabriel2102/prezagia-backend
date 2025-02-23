@@ -17,3 +17,5 @@ backend.log
 # Archivos de bases de datos locales
 *.sqlite3
 *.db
+
+serviceFirebaseConfig.json

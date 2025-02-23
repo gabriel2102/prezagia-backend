@@ -3,6 +3,7 @@ import requests
 from config import Config
 from log_config import logger
 
+
 saldo_bp = Blueprint("saldo", __name__)
 
 @saldo_bp.route("/saldo", methods=["GET"])
