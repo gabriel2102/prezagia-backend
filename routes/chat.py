@@ -46,7 +46,7 @@ def calcular_max_tokens(mensaje):
         return 150
     elif longitud < 30:
         return 300
-    return 500  # 🔥 Máximo 500 tokens para evitar costos elevados
+    return 500  # Máximo 500 tokens para evitar costos elevados
 
 def continuar_respuesta(prompt, respuesta_inicial):
     """ Pide a OpenAI que continúe una respuesta si se cortó. """
@@ -81,9 +81,9 @@ def chat():
 
     db = current_app.config["db"]
     auth = current_app.config["auth"]
-    cache = current_app.config["cache"]  # 🔥 Obtener cache correctamente
+    cache = current_app.config["cache"]  #  Obtener cache correctamente
 
-    # 🔥 Verificar usuario autenticado
+    # Verificar usuario autenticado
     try:
         decoded_token = auth.verify_id_token(token.replace("Bearer ", ""))
         usuario = decoded_token["uid"]
@@ -95,20 +95,24 @@ def chat():
     if not mensaje_usuario:
         return jsonify({"error": "Mensaje vacío"}), 400
 
-    # 🔥 Buscar en caché (memoria y Firestore)
+    # Buscar en caché (memoria y Firestore)
     cache_key = f"chat_cache_{usuario}_{mensaje_usuario}"
     respuesta_texto = cache.get(cache_key)
 
     if not respuesta_texto:
-        consulta_cache = db.collection("usuarios").document(usuario).collection("cache_consulta").where(
-            "pregunta", "==", mensaje_usuario).limit(1).stream()
-        cache_existente = next(consulta_cache, None)
+        try:
+            consulta_cache = db.collection("usuarios").document(usuario).collection("cache_consulta").where(
+                "pregunta", "==", mensaje_usuario).limit(1).stream()
+            cache_existente = next(consulta_cache, None)
 
-        if cache_existente:
-            respuesta_texto = cache_existente.to_dict()["respuesta"]
-            cache.set(cache_key, respuesta_texto)
+            if cache_existente:
+                respuesta_texto = cache_existente.to_dict()["respuesta"]
+                cache.set(cache_key, respuesta_texto)
+        except Exception as e:
+            logger.error(f"Error al buscar en caché: {e}")
+            return jsonify({"error": "Error al acceder a Firestore"}), 500
 
-    # 🔥 Si aún no hay respuesta, consultar OpenAI
+    # Si aún no hay respuesta, consultar OpenAI
     if not respuesta_texto:
         transitos = obtener_transitos_skyfield()
         transitos_str = "\n".join([f"{planeta}: {grados}°" for planeta, grados in transitos.items()])
@@ -144,16 +148,21 @@ def chat():
             logger.error(f"Error en la consulta a OpenAI: {e}")
             respuesta_texto = "Hubo un error al procesar tu consulta."
 
-        # 🔥 Guardar respuesta en Firestore y en caché con una transacción
-        batch = db.batch()
-        cache_data = {"pregunta": mensaje_usuario, "respuesta": respuesta_texto}
-        consulta_data = {"mensaje": mensaje_usuario, "respuesta": respuesta_texto}
+        #Guardar respuesta en Firestore y en caché con una transacción
+        try:
+            batch = db.batch()
+            cache_data = {"pregunta": mensaje_usuario, "respuesta": respuesta_texto}
+            consulta_data = {"mensaje": mensaje_usuario, "respuesta": respuesta_texto}
 
-        batch.set(db.collection("usuarios").document(usuario).collection("cache_consulta").document(), cache_data)
-        batch.set(db.collection("usuarios").document(usuario).collection("consultas").document(), consulta_data)
-        batch.commit()
+            batch.set(db.collection("usuarios").document(usuario).collection("cache_consulta").document(), cache_data)
+            batch.set(db.collection("usuarios").document(usuario).collection("consultas").document(), consulta_data)
+            batch.commit()
 
-        cache.set(cache_key, respuesta_texto)
+            cache.set(cache_key, respuesta_texto)
+         
+        except Exception as e:
+            logger.error(f"Error al guardar en Firestore: {e}")
+            return jsonify({"error": "No se pudo guardar la respuesta en la base de datos"}), 500
 
     logger.info(f"Respuesta enviada al usuario: {usuario}")
     return jsonify({"respuesta": respuesta_texto})
