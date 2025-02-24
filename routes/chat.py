@@ -84,7 +84,7 @@ def chat():
     db = current_app.config["db"]
     auth = current_app.config["auth"]
 
-     # Verificar y extraer el UID del usuario autenticado
+    # Verificar y extraer el UID del usuario autenticado
     try:
         decoded_token = auth.verify_id_token(token.replace("Bearer ", ""))
         usuario = decoded_token["uid"]  # 🔥 Ahora `usuario` tiene el UID del usuario autenticado
@@ -98,13 +98,24 @@ def chat():
         logger.warning("Solicitud sin mensaje recibido")
         return jsonify({"error": "Mensaje vacío"}), 400
 
-    # Verificar si la consulta ya existe en Firestore (caché)
-    consulta_cache = db.collection("cache_consulta").where("pregunta", "==", mensaje_usuario).limit(1).stream()
+     # Primero revisar la caché de Flask antes de consultar Firestore
+    cache_key = f"chat_cache_{usuario}_{mensaje_usuario}"
+    respuesta_texto = cache.get(cache_key)
+
+    if respuesta_texto:
+        logger.info("Respuesta obtenida desde caché en memoria")
+        return jsonify({"respuesta": respuesta_texto})
+
+    #Luego revisar la caché en Firestore
+    consulta_cache = db.collection("usuarios").document(usuario).collection("cache_consulta").where(
+        "pregunta", "==", mensaje_usuario).limit(1).stream()
+
     cache_existente = next(consulta_cache, None)
 
     if cache_existente:
-        logger.info("Respuesta obtenida desde caché del usuario en Firestore")
-        return jsonify({"respuesta": cache_existente.to_dict()["respuesta"]})
+        respuesta_texto = cache_existente.to_dict()["respuesta"]
+        cache.set(cache_key, respuesta_texto)  # Guardar en caché en memoria también
+        return jsonify({"respuesta": respuesta_texto})
 
     # Determinar cuántos tokens necesita la respuesta
     def calcular_max_tokens(mensaje):
@@ -168,6 +179,9 @@ def chat():
         "respuesta": respuesta_texto
     }
     db.collection("usuarios").document(usuario).collection("cache_consulta").add(cache_data)
+
+    # Guardar en caché en memoria para respuestas más rápidas
+    cache.set(cache_key, respuesta_texto)
     
     logger.info(f"Respuesta enviada al usuario: {usuario}")
 

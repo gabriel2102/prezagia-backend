@@ -1,4 +1,6 @@
 from flask import Flask
+from flask_compress import Compress 
+from flask_caching import Cache
 from flask_cors import CORS
 from routes.chat import chat_bp
 from routes.saldo import saldo_bp
@@ -6,12 +8,18 @@ from log_config import logger
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 
-cred = credentials.Certificate("serviceFirebaseConfig.json")
-firebase_admin.initialize_app(cred)
+if not firebase_admin._apps:  # Evitar inicializar Firebase más de una vez
+    cred = credentials.Certificate("serviceFirebaseConfig.json")
+    firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+
 
 app = Flask(__name__)
 CORS(app)
+Compress(app)
+# Configuración de caché (almacenado en memoria)
+cache = Cache(app, config={"CACHE_TYPE": "simple", "CACHE_DEFAULT_TIMEOUT": 300})  # 5 min
 
 # Guardar Firestore y Auth en la configuración de Flask
 app.config["db"] = db
