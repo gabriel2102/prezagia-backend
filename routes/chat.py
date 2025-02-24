@@ -33,7 +33,6 @@ def obtener_transitos_skyfield():
         }
 
         posiciones = {planeta: round(obj.at(t).ecliptic_latlon()[1].degrees, 2) for planeta, obj in planetas.items()}
-
         logger.info(f"Tránsitos planetarios obtenidos: {posiciones}")
         return posiciones
     except Exception as e:
@@ -47,7 +46,27 @@ def calcular_max_tokens(mensaje):
         return 150
     elif longitud < 30:
         return 300
-    return 500  # Máximo 500 tokens para evitar costos elevados
+    return 500  # 🔥 Máximo 500 tokens para evitar costos elevados
+
+def continuar_respuesta(prompt, respuesta_inicial):
+    """ Pide a OpenAI que continúe una respuesta si se cortó. """
+    nuevo_prompt = f"""
+    La respuesta anterior quedó incompleta:
+    "{respuesta_inicial}"
+
+    Continúa la respuesta dentro del límite de tokens disponibles. 
+    Evita repetir lo que ya has dicho y concéntrate en completar la idea.
+    """
+    try:
+        nueva_respuesta = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": nuevo_prompt}],
+            max_tokens=300  # Solo para completar lo que falta
+        )
+        return respuesta_inicial + " " + nueva_respuesta.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error al continuar la respuesta: {e}")
+        return respuesta_inicial  # Retornar la respuesta parcial si falla la continuación
 
 @chat_bp.route("/chat", methods=["POST"])
 def chat():
@@ -62,8 +81,9 @@ def chat():
 
     db = current_app.config["db"]
     auth = current_app.config["auth"]
+    cache = current_app.config["cache"]  # 🔥 Obtener cache correctamente
 
-    # Verificar usuario autenticado
+    # 🔥 Verificar usuario autenticado
     try:
         decoded_token = auth.verify_id_token(token.replace("Bearer ", ""))
         usuario = decoded_token["uid"]
@@ -75,7 +95,7 @@ def chat():
     if not mensaje_usuario:
         return jsonify({"error": "Mensaje vacío"}), 400
 
-    # Buscar en caché (memoria y Firestore)
+    # 🔥 Buscar en caché (memoria y Firestore)
     cache_key = f"chat_cache_{usuario}_{mensaje_usuario}"
     respuesta_texto = cache.get(cache_key)
 
@@ -88,7 +108,7 @@ def chat():
             respuesta_texto = cache_existente.to_dict()["respuesta"]
             cache.set(cache_key, respuesta_texto)
 
-    # Si aún no hay respuesta, consultar OpenAI
+    # 🔥 Si aún no hay respuesta, consultar OpenAI
     if not respuesta_texto:
         transitos = obtener_transitos_skyfield()
         transitos_str = "\n".join([f"{planeta}: {grados}°" for planeta, grados in transitos.items()])
@@ -124,7 +144,7 @@ def chat():
             logger.error(f"Error en la consulta a OpenAI: {e}")
             respuesta_texto = "Hubo un error al procesar tu consulta."
 
-        # Guardar respuesta en Firestore y en caché con una transacción
+        # 🔥 Guardar respuesta en Firestore y en caché con una transacción
         batch = db.batch()
         cache_data = {"pregunta": mensaje_usuario, "respuesta": respuesta_texto}
         consulta_data = {"mensaje": mensaje_usuario, "respuesta": respuesta_texto}
